@@ -3,13 +3,14 @@
 #include <map>
 #include <set>
 #include <queue>
+#include <stack>
 #include <string>
 #include <algorithm>
 #include <limits>
 
 using namespace std;
 
-//---------------------- NFA Structure ------------------------
+/* ====================== NFA ====================== */
 struct NFA {
     set<int> states;
     set<char> alphabet;
@@ -26,59 +27,55 @@ struct NFA {
 
         for (char c : input) {
             set<int> next;
-            for (int state : current) {
-                if (transitions[state].count(c)) {
-                    next.insert(transitions[state][c].begin(), transitions[state][c].end());
+            for (int s : current) {
+                if (transitions[s].count(c)) {
+                    next.insert(transitions[s][c].begin(),
+                                transitions[s][c].end());
                 }
             }
             current = next;
             if (current.empty()) return false;
         }
 
-        for (int state : current) {
-            if (finalStates.count(state)) return true;
-        }
+        for (int s : current)
+            if (finalStates.count(s)) return true;
         return false;
     }
 
     void printTransitions() {
-        cout << "NFA Transitions:\n";
-        for (auto &[from, mapChar] : transitions) {
-            for (auto &[c, toStates] : mapChar) {
-                for (int to : toStates) {
-                    cout << "  " << from << " --" << c << "--> " << to << "\n";
-                }
-            }
-        }
-        cout << "Start state: " << startState << "\nFinal states: ";
+        cout << "\nNFA Transitions:\n";
+        for (auto &[from, mp] : transitions)
+            for (auto &[c, tos] : mp)
+                for (int t : tos)
+                    cout << "  " << from << " --" << c << "--> " << t << "\n";
+
+        cout << "Start: " << startState << "\nFinal: ";
         for (int f : finalStates) cout << f << " ";
         cout << "\n";
     }
 };
 
-//---------------------- Simple Regex to NFA ------------------------
-// Supports: single characters, union '|', concatenation, Kleene star '*'
-// This is a simplified version; full regex support requires Thompson's construction
+/* ====================== Regex → NFA ====================== */
+/* Literal concatenation only */
 NFA regexToNFA(const string &regex) {
     NFA nfa;
+    int next = 1;
     nfa.startState = 0;
-    int nextState = 1;
     nfa.states.insert(0);
 
-    int lastState = 0;
+    int last = 0;
     for (char c : regex) {
-        nfa.addTransition(lastState, c, nextState);
-        nfa.states.insert(nextState);
+        nfa.addTransition(last, c, next);
+        nfa.states.insert(next);
         nfa.alphabet.insert(c);
-        lastState = nextState;
-        nextState++;
+        last = next++;
     }
-    nfa.finalStates.insert(lastState);
 
+    nfa.finalStates.insert(last);
     return nfa;
 }
 
-//---------------------- DFA Conversion ------------------------
+/* ====================== DFA ====================== */
 struct DFA {
     set<int> states;
     set<char> alphabet;
@@ -89,135 +86,160 @@ struct DFA {
     bool simulate(const string &input) {
         int current = startState;
         for (char c : input) {
-            if (transitions[current].count(c))
-                current = transitions[current][c];
-            else
+            if (!transitions[current].count(c))
                 return false;
+            current = transitions[current][c];
         }
-        return finalStates.count(current) > 0;
+        return finalStates.count(current);
     }
 
     void printTransitions() {
-        cout << "DFA Transitions:\n";
-        for (auto &[from, mapChar] : transitions) {
-            for (auto &[c, to] : mapChar) {
+        cout << "\nDFA Transitions:\n";
+        for (auto &[from, mp] : transitions)
+            for (auto &[c, to] : mp)
                 cout << "  " << from << " --" << c << "--> " << to << "\n";
-            }
-        }
-        cout << "Start state: " << startState << "\nFinal states: ";
+
+        cout << "Start: " << startState << "\nFinal: ";
         for (int f : finalStates) cout << f << " ";
         cout << "\n";
     }
 };
 
-// Very simple NFA → DFA conversion using subset construction
+/* ====================== NFA → DFA ====================== */
 DFA nfaToDFA(NFA &nfa) {
     DFA dfa;
     dfa.alphabet = nfa.alphabet;
 
-    map<set<int>, int> stateMap;
+    map<set<int>, int> id;
     queue<set<int>> q;
 
-    set<int> startSet = {nfa.startState};
-    stateMap[startSet] = 0;
+    set<int> start = {nfa.startState};
+    id[start] = 0;
     dfa.startState = 0;
-    int nextState = 1;
-    q.push(startSet);
+    q.push(start);
+
+    int nextId = 1;
 
     while (!q.empty()) {
-        set<int> currentSet = q.front(); q.pop();
-        int currentId = stateMap[currentSet];
-        dfa.states.insert(currentId);
+        auto cur = q.front(); q.pop();
+        int cid = id[cur];
+        dfa.states.insert(cid);
 
-        for (char c : nfa.alphabet) {
-            set<int> nextSet;
-            for (int s : currentSet) {
+        for (char c : dfa.alphabet) {
+            set<int> next;
+            for (int s : cur)
                 if (nfa.transitions[s].count(c))
-                    nextSet.insert(nfa.transitions[s][c].begin(), nfa.transitions[s][c].end());
-            }
-            if (nextSet.empty()) continue;
+                    next.insert(nfa.transitions[s][c].begin(),
+                                nfa.transitions[s][c].end());
 
-            if (!stateMap.count(nextSet)) {
-                stateMap[nextSet] = nextState++;
-                q.push(nextSet);
+            if (next.empty()) continue;
+
+            if (!id.count(next)) {
+                id[next] = nextId++;
+                q.push(next);
             }
 
-            dfa.transitions[currentId][c] = stateMap[nextSet];
+            dfa.transitions[cid][c] = id[next];
         }
 
-        for (int s : currentSet)
+        for (int s : cur)
             if (nfa.finalStates.count(s))
-                dfa.finalStates.insert(currentId);
+                dfa.finalStates.insert(cid);
     }
 
     return dfa;
 }
 
-//---------------------- Approximate Matching ------------------------
-bool approximateMatch(const string &sequence, const string &pattern, int maxErrors) {
-    int n = sequence.size();
-    int m = pattern.size();
-    vector<vector<int>> dp(n + 1, vector<int>(m + 1, 0));
+/* ====================== Approximate Matching ====================== */
+bool approximateMatch(const string &text,
+                      const string &pattern,
+                      int maxErrors) {
+    int n = text.size(), m = pattern.size();
+    vector<vector<int>> dp(n+1, vector<int>(m+1));
 
-    for (int j = 0; j <= m; ++j) dp[0][j] = j;
+    for (int j = 0; j <= m; j++) dp[0][j] = j;
 
-    for (int i = 1; i <= n; ++i) {
+    for (int i = 1; i <= n; i++) {
         dp[i][0] = 0;
-        for (int j = 1; j <= m; ++j) {
-            if (sequence[i - 1] == pattern[j - 1]) dp[i][j] = dp[i - 1][j - 1];
-            else dp[i][j] = 1 + min({dp[i - 1][j - 1], dp[i][j - 1], dp[i - 1][j]});
+        for (int j = 1; j <= m; j++) {
+            if (text[i-1] == pattern[j-1])
+                dp[i][j] = dp[i-1][j-1];
+            else
+                dp[i][j] = 1 + min({ dp[i-1][j],
+                                     dp[i][j-1],
+                                     dp[i-1][j-1] });
         }
     }
 
-    for (int i = m; i <= n; ++i) {
+    for (int i = m; i <= n; i++)
         if (dp[i][m] <= maxErrors) return true;
-    }
+
     return false;
 }
 
-//---------------------- Main Program ------------------------
+/* ====================== PDA ====================== */
+/* Language: a^n b^n */
+struct PDA {
+    bool simulate(const string &input) {
+        stack<char> st;
+        int i = 0;
+
+        /* Push phase: read a's */
+        while (i < input.size() && input[i] == 'a') {
+            st.push('A');
+            i++;
+        }
+
+        /* Pop phase: read b's */
+        while (i < input.size() && input[i] == 'b') {
+            if (st.empty()) return false;
+            st.pop();
+            i++;
+        }
+
+        return i == input.size() && st.empty();
+    }
+};
+
+/* ====================== MAIN ====================== */
 int main() {
     cout << "=== Formal Language Simulator ===\n";
 
-    cout << "\nEnter a regex pattern (simple characters supported, e.g., ab*): ";
-    string pattern;
-    cin >> pattern;
+    string regex;
+    cout << "\nEnter regex (literal concatenation): ";
+    cin >> regex;
 
-    NFA nfa = regexToNFA(pattern);
+    NFA nfa = regexToNFA(regex);
     nfa.printTransitions();
 
     DFA dfa = nfaToDFA(nfa);
     dfa.printTransitions();
 
-    cout << "\nEnter a string to test exact match: ";
-    string testStr;
-    cin >> testStr;
+    string test;
+    cout << "\nEnter string for exact match: ";
+    cin >> test;
 
-    if (nfa.simulate(testStr))
-        cout << "Match found using NFA!\n";
-    else
-        cout << "No match found using NFA.\n";
+    cout << (nfa.simulate(test) ? "NFA ACCEPT\n" : "NFA REJECT\n");
+    cout << (dfa.simulate(test) ? "DFA ACCEPT\n" : "DFA REJECT\n");
 
-    if (dfa.simulate(testStr))
-        cout << "Match found using DFA!\n";
-    else
-        cout << "No match found using DFA.\n";
-
-    cout << "\nEnter a DNA sequence for approximate matching: ";
     string dna;
+    cout << "\nEnter DNA sequence for approximate matching: ";
     cin >> dna;
-    int maxErrors = 1;
 
-    if (approximateMatch(dna, pattern, maxErrors))
-        cout << "Approximate match found with at most " << maxErrors << " error(s)!\n";
+    if (approximateMatch(dna, regex, 1))
+        cout << "Approximate match found\n";
     else
-        cout << "No approximate match found.\n";
+        cout << "No approximate match\n";
 
-    return 0;
+    /* PDA Section */
+    PDA pda;
+    string cfl;
+    cout << "\nEnter string for PDA test (a^n b^n): ";
+    cin >> cfl;
 
-    cout << "\nPress Enter to exit...";
-    cin.ignore(numeric_limits<streamsize>::max(), '\n'); 
-    cin.get(); // Wait for the user to press Enter
+    cout << (pda.simulate(cfl)
+            ? "PDA ACCEPT (Context-Free Language)\n"
+            : "PDA REJECT\n");
 
     return 0;
 }
